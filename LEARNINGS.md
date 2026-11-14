@@ -236,3 +236,6 @@ Write an entry the moment a real signal happens: a user correction, the same err
 
 ### L-028 · 2026-11-14 · `close-without-consume`: sessions close questions and never record the use
 Of 41 sets holding unused answers, 11 had every answered question closed: sessions acted, closed, and never ran consume, because the generated continue prompt and chainwright's template said read, act, close and nothing else. A step that only one document mentions gets skipped; `close` now records the use itself, and the prompts say consume.
+
+### L-029 · 2026-11-14 · `windows-short-temp-path`: compare temp paths by folder name in tests
+On the Windows runners `tempfile.mkdtemp` returns an 8.3 short path (RUNNER~1) while ask.py prints the resolved long path, so `assertIn(str(set.dir), text)` failed only in CI. Match the unique temp folder name instead.

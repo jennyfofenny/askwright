@@ -181,3 +181,4 @@ Owner report: some answers are never processed, others are used and never marked
 
 ## 2026-11-14 · answer sweep 0.31.0 (session 1 of the chain)
 Built `ask.py sweep`, the week warning and the gap fixes (decision 2026-11-14-answer-sweep). README trimmed to the wiki (14.1 to 8.4 KB); install ceiling 400 to 412 KB. Ran it on the owner's inbox: 16 used sets marked with evidence, 3 trivial handled, 27 dead temp entries moved aside, prompts for 17 sets in 14 projects (vault sidecar). chainwright PR #19 fixes its template (pair). L-028 `close-without-consume`.
+- 2026-11-14: PR #80 merged, v0.31.0 tagged (release workflow builds the zip), wiki Commands and Dashboard pages updated, askwright 0.31.0 and chainwright 0.8.4 (PR #19 merged) installed, shared server restarted on 47631 at 0.31.0. Prompt file regenerated from the main clone.
