@@ -6,6 +6,20 @@ Entry shape: `### C-YYYYMMDD-n · date · one-line summary`, then `because:` (ID
 
 ## Unreleased
 
+## 0.35.0
+
+### C-20261116-4 · 2026-11-16 · Who is running spans machines through the shared claim repository
+- because: user request (Jennifer works on her own PC; Mark approved sharing titles, ids, branches, machine names and times, never message text)
+- files: skills/askwright/scripts/agents.py (remote_repos, remote_refs, remote_rows, publish, --publish, --local), skills/askwright/scripts/ask.py (presence_loop, project_agents), tests/test_ask.py (AgentsTests), tests/fixtures/fake_gh_refs.py
+When a project's grind profile has `work.remote`, the who-is-running list also reads that repository's `grind-claim/*` refs (grindwright's shared claims) and `grind-presence/*` refs, so sessions on the other computer show with the machine name and how old the evidence is; a claim whose lease ran out reads as possibly stale. `agents.py --dir D --publish` writes this machine's rows to `grind-presence/<machine>` (one ref per machine, replaced in place), and the hub does it every three minutes when started with `ASKWRIGHT_PRESENCE=1`. Reads are cached for a minute; a failed read is named on the page.
+
+## 0.34.1
+
+### C-20261116-3 · 2026-11-16 · Who-is-running fixes seen in the browser
+- because: user request (running agents on project pages; defects noted in the session 3 browser check)
+- files: skills/askwright/scripts/agents.py (iso, parent-folder rows, worktree), skills/askwright/scripts/ask.py (grind_page), tests/test_ask.py (AgentsTests)
+Times are written in local time with their offset instead of UTC, a session started in a parent folder shows the project folder it works in (and says where it started), and the mounted grindwright page no longer shows two back links when grindwright already links to the project page.
+
 ## 0.34.0
 
 ### C-20261116-2 · 2026-11-16 · Mounted grindwright page uses its inline hook; real handoff and takeover keys
