@@ -2,6 +2,8 @@
 
 A payload comment shows the questions readably and carries the set in a hidden block:
 <!-- askwright:payload v1 BASE64-JSON -->. An answers comment carries <!-- askwright:answers v1 BASE64-JSON -->.
+On an open pull request it also carries <!-- askwright:draft-hold v1 ... -->: a draft until every hold is
+answered, then ready if askwright drafted it (`restore`).
 All GitHub calls go through `gh api` (the gh CLI's login); ASKWRIGHT_GH, a JSON list, overrides the command.
 """
 import base64
@@ -13,7 +15,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-PAY, ANS = "askwright:payload v1", "askwright:answers v1"
+PAY, ANS, HOLD = "askwright:payload v1", "askwright:answers v1", "askwright:draft-hold v1"
 LIMIT = 65000  # GitHub refuses comment bodies over 65,536 characters
 URL_RE = re.compile(r"https://github\.com/([^/]+/[^/]+)/(?:issues|pull)/(\d+)(?:[^#]*)?(?:#(issuecomment|discussion_r)-?(\d+))?")
 REF_RE = re.compile(r"^([\w.-]+/[\w.-]+)#(\d+)$")
@@ -95,6 +97,63 @@ def find_comment(ref, tag):
     raise GhError(f"no askwright comment ({tag}) on {repo}#{number}")
 
 
+# ---- draft holds on pull requests
+
+def open_pull(repo, number):
+    if not (gh(f"repos/{repo}/issues/{number}") or {}).get("pull_request"):
+        return None
+    pr = gh(f"repos/{repo}/pulls/{number}") or {}
+    return pr if pr.get("state") == "open" and not pr.get("merged") else None
+
+
+def set_draft(pr, draft):
+    m = "convertPullRequestToDraft" if draft else "markPullRequestReadyForReview"
+    gh("graphql", "-f", f"query=mutation($id: ID!) {{ {m}(input: {{pullRequestId: $id}}) {{ clientMutationId }} }}",
+       "-f", "id=" + pr["node_id"])
+
+
+def holds(repo, number):
+    """Draft holds on the thread, oldest first, each marked answered when an answers comment cites it."""
+    cs = comments(repo, number)
+    done = {(unblock(ANS, c.get("body")) or {}).get("source") for c in cs}
+    return [dict(h, answered=c.get("html_url") in done) for c in cs for h in [unblock(HOLD, c.get("body"))] if h]
+
+
+def begin_hold(repo, number):
+    pr = open_pull(repo, number)
+    if not pr:
+        return None, None
+    inherited = any(h.get("restore") and not h["answered"] for h in holds(repo, number))
+    return pr, {"restore": not pr.get("draft") or inherited}
+
+
+def apply_hold(pr):
+    if pr.get("draft"):
+        return {"held": True, "draft": True, "converted": False}
+    try:
+        set_draft(pr, True)
+    except GhError as e:
+        return {"held": True, "draft": False, "error": str(e)}
+    return {"held": True, "draft": True, "converted": True}
+
+
+def release_holds(repo, number):
+    found = holds(repo, number)
+    if not found:
+        return None
+    pr = open_pull(repo, number)
+    why = ("other questions on this pull request are still open" if not all(h["answered"] for h in found) else
+           "the pull request was a draft before askwright held it" if not found[-1].get("restore") else
+           "the pull request is not an open draft" if not (pr and pr.get("draft")) else None)
+    if why:
+        return {"ready": False, "reason": why}
+    try:
+        set_draft(pr, False)
+    except GhError as e:
+        return {"ready": False, "error": str(e)}
+    return {"ready": True}
+
+
 # ---- readable text
 
 def question_lines(data):
@@ -133,19 +192,23 @@ def answer_line(r):
 
 # ---- commands (called from ask.py with its helpers, to keep one copy of set loading and answer reading)
 
-def post(set_dir, repo, number, load_set, write_json):
+def post(set_dir, repo, number, load_set, write_json, draft=True):
     d, data = load_set(set_dir)
     title = data.get("title") or data.get("id") or "Questions"
+    pr, hold = begin_hold(repo, number) if draft else (None, None)
+    held = ["_This pull request stays a draft until these questions are answered; the answers reply marks it "
+            "ready for review again._", ""] if hold else []
     body = "\n".join([f"### askwright: {title}", "", *([data["context"], ""] if data.get("context") else []),
-                      *question_lines(data), "",
+                      *question_lines(data), "", *held,
                       "_Answer with askwright: `ask.py gh-pull <this comment's URL>`, then `ask.py serve`; "
-                      "`ask.py gh-reply` posts the answers back here._", "", block(PAY, data)])
+                      "`ask.py gh-reply` posts the answers back here._", "", block(PAY, data),
+                      *([block(HOLD, dict(hold, set=data.get("id")))] if hold else [])])
     if len(body) > LIMIT:
         raise GhError(f"the payload comment would be {len(body)} characters; GitHub's limit is 65,536")
     c = gh("--method", "POST", f"repos/{repo}/issues/{number}/comments", body={"body": body})
     info = {"repo": repo, "number": number, "kind": "issue", "comment_id": c.get("id"), "comment_url": c.get("html_url")}
     write_json(Path(d) / "github.json", info)
-    return dict({"ok": True, "set": str(d)}, **info)
+    return dict({"ok": True, "set": str(d), "draft": apply_hold(pr) if hold else {"held": False}}, **info)
 
 
 def pull(ref, out, write_json):
@@ -201,7 +264,15 @@ def reply(set_dir, load_set, read_answers, write_json):
         c = gh("--method", "POST", f"repos/{g['repo']}/issues/{g['number']}/comments", body={"body": body})
     g["answers_url"] = c.get("html_url")
     write_json(Path(d) / "github.json", g)
-    return {"ok": True, "set": str(d), "answers_url": c.get("html_url"), "count": len(rows)}
+    out = {"ok": True, "set": str(d), "answers_url": c.get("html_url"), "count": len(rows)}
+    if g.get("kind") != "review":
+        try:
+            released = release_holds(g["repo"], g["number"])
+        except GhError as e:
+            released = {"ready": False, "error": str(e)}
+        if released is not None:
+            out["draft"] = released
+    return out
 
 
 def answers(ref):

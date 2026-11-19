@@ -2872,12 +2872,8 @@ class PaintTests(unittest.TestCase):
         self.assertEqual(r["state"], "answered")
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=1)
-
-
-class GitHubTests(ServerCase):
-    """0.26.0: questions travel in a GitHub comment and the answers go back as a reply (a fake gh, no network)."""
+class FakeGhCase(ServerCase):
+    """A served set with `gh` replaced by tests/fixtures/fake_gh.py (no network)."""
 
     def setUp(self):
         super().setUp()
@@ -2892,6 +2888,10 @@ class GitHubTests(ServerCase):
 
     def gh_state(self):
         return json.loads(self.state.read_text(encoding="utf-8"))
+
+
+class GitHubTests(FakeGhCase):
+    """0.26.0: questions travel in a GitHub comment and the answers go back as a reply."""
 
     def test_post_pull_answer_reply_round_trip(self):
         code, out = run_cli("gh-post", self.s.dir, "--repo", "o/r", "--issue", 7)
@@ -2940,3 +2940,104 @@ class GitHubTests(ServerCase):
     def test_remote_page_hides_github(self):
         ask.write_json_atomic(self.s.dir / "github.json", {"repo": "o/r", "number": 3})
         self.assertIsNone(ask.page_set(self.srv, remote=True)["github"])
+
+
+class GitHubDraftHoldTests(FakeGhCase):
+    """0.45.0: questions posted on an open pull request make it a draft until the answers reply."""
+
+    def setUp(self):
+        super().setUp()
+        self.pull(5)
+
+    def pull(self, number, **fields):
+        st = self.gh_state() if self.state.exists() else {"comments": [], "calls": []}
+        pr = {"state": "open", "merged": False, "draft": False, "node_id": f"PR_{number}"}
+        st.setdefault("pulls", {})[f"o/r#{number}"] = dict(pr, **fields)
+        self.state.write_text(json.dumps(st), encoding="utf-8")
+
+    def is_draft(self, number=5):
+        return self.gh_state()["pulls"][f"o/r#{number}"]["draft"]
+
+    def mutations(self):
+        return [c["mutation"] for c in self.gh_state()["calls"] if c.get("mutation")]
+
+    def second_set(self):
+        d = self.s.tmp / "second"
+        shutil.copytree(self.s.dir, d)
+        (d / "github.json").unlink(missing_ok=True)
+        return d
+
+    def test_post_drafts_the_pull_request_and_reply_marks_it_ready(self):
+        code, out = run_cli("gh-post", self.s.dir, "--repo", "o/r", "--issue", 5)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out["draft"], {"held": True, "draft": True, "converted": True})
+        self.assertTrue(self.is_draft())
+        body = self.gh_state()["comments"][0]["body"]
+        self.assertIn("<!-- askwright:draft-hold v1 ", body)
+        self.assertIn("stays a draft until these questions are answered", body)
+
+        code, out = run_cli("gh-reply", self.s.dir)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out["draft"], {"ready": True})
+        self.assertFalse(self.is_draft())
+        self.assertEqual(self.mutations(), ["convertPullRequestToDraft", "markPullRequestReadyForReview"])
+
+    def test_an_issue_is_never_held(self):
+        code, out = run_cli("gh-post", self.s.dir, "--repo", "o/r", "--issue", 7)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out["draft"], {"held": False})
+        self.assertNotIn("draft-hold", self.gh_state()["comments"][0]["body"])
+        self.assertNotIn("draft", run_cli("gh-reply", self.s.dir)[1])
+        self.assertEqual(self.mutations(), [])
+
+    def test_closed_or_merged_pull_requests_are_not_held(self):
+        self.pull(6, state="closed")
+        self.pull(8, state="closed", merged=True)
+        for number in (6, 8):
+            self.assertEqual(run_cli("gh-post", self.s.dir, "--repo", "o/r", "--issue", number)[1]["draft"], {"held": False})
+        self.assertEqual(self.mutations(), [])
+
+    def test_no_draft_leaves_the_pull_request_alone(self):
+        code, out = run_cli("gh-post", self.s.dir, "--repo", "o/r", "--issue", 5, "--no-draft")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out["draft"], {"held": False})
+        self.assertFalse(self.is_draft())
+        self.assertEqual(self.mutations(), [])
+
+    def test_a_draft_the_author_made_stays_a_draft(self):
+        self.pull(5, draft=True)
+        code, out = run_cli("gh-post", self.s.dir, "--repo", "o/r", "--issue", 5)
+        self.assertEqual(out["draft"], {"held": True, "draft": True, "converted": False})
+        code, out = run_cli("gh-reply", self.s.dir)
+        self.assertFalse(out["draft"]["ready"])
+        self.assertIn("draft before", out["draft"]["reason"])
+        self.assertTrue(self.is_draft())
+        self.assertEqual(self.mutations(), [])
+
+    def test_ready_only_after_the_last_open_set_is_answered(self):
+        second = self.second_set()
+        run_cli("gh-post", self.s.dir, "--repo", "o/r", "--issue", 5)
+        code, out = run_cli("gh-post", second, "--repo", "o/r", "--issue", 5)
+        self.assertEqual(out["draft"], {"held": True, "draft": True, "converted": False})
+
+        out = run_cli("gh-reply", self.s.dir)[1]
+        self.assertFalse(out["draft"]["ready"])
+        self.assertIn("still open", out["draft"]["reason"])
+        self.assertTrue(self.is_draft())
+
+        self.assertEqual(run_cli("gh-reply", second)[1]["draft"], {"ready": True})
+        self.assertFalse(self.is_draft())
+
+    def test_a_refused_draft_change_never_fails_the_post_or_reply(self):
+        st = self.gh_state()
+        st["fail_graphql"] = True
+        self.state.write_text(json.dumps(st), encoding="utf-8")
+        code, out = run_cli("gh-post", self.s.dir, "--repo", "o/r", "--issue", 5)
+        self.assertEqual(code, 0, out)
+        self.assertFalse(out["draft"]["draft"])
+        self.assertIn("not accessible", out["draft"]["error"])
+        self.assertTrue(self.gh_state()["comments"])  # the questions are posted all the same
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=1)

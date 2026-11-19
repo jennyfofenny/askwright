@@ -56,7 +56,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-VERSION = "0.44.1"
+VERSION = "0.45.0"
 DEFAULT_PORT = 47631  # the shared server's port; ASKWRIGHT_PORT moves it (0 picks a free one)
 PAGE = Path(__file__).resolve().parent / "page"
 BUNDLE = re.compile(r"^(those|these|both|all of)\b|\bplus\b", re.I)
@@ -4069,7 +4069,7 @@ def gh_call(fn):
 
 
 def cmd_gh_post(a):
-    return emit(gh_call(lambda g: g.post(a.set, a.repo, a.issue, load_set, write_json_atomic)))
+    return emit(gh_call(lambda g: g.post(a.set, a.repo, a.issue, load_set, write_json_atomic, draft=not a.no_draft)))
 
 
 def cmd_gh_pull(a):
@@ -4232,6 +4232,7 @@ def main(argv=None):
     s.add_argument("--startup", action="store_true", help="start the shared server at sign-in instead (Windows)")
     s = sub.add_parser("gh-post", help="post the questions to a GitHub issue or pull request comment")
     s.add_argument("set"); s.add_argument("--repo", required=True); s.add_argument("--issue", type=int, required=True)
+    s.add_argument("--no-draft", action="store_true", help="leave an open pull request's draft state alone")
     s = sub.add_parser("gh-pull", help="make a local set from a GitHub askwright comment")
     s.add_argument("ref", help="OWNER/REPO#N or a comment URL"); s.add_argument("--out")
     sub.add_parser("gh-reply", help="post this set's answers back to its GitHub comment").add_argument("set")

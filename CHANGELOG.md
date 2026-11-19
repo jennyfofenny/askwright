@@ -6,7 +6,12 @@ Entry shape: `### C-YYYYMMDD-n · date · one-line summary`, then `because:` (ID
 
 ## Unreleased
 
-## 0.44.1
+## 0.45.0
+
+### C-20261118-3 · 2026-11-18 · Questions on an open pull request keep it a draft until they are answered
+- because: user request (a pull request with open questions read as ready for review while its author was still waiting on the answers)
+- files: skills/askwright/scripts/gh.py (draft holds, post, reply), skills/askwright/scripts/ask.py (gh-post `--no-draft`), skills/askwright/references/github.md, tests/test_ask.py (FakeGhCase, GitHubDraftHoldTests), tests/fixtures/fake_gh.py (pulls, graphql), scripts/budget.py
+`gh-post` on an open pull request converts it to a draft and marks its comment with a hidden `askwright:draft-hold` block; `gh-reply` marks it ready for review once every held set on it has an answers comment, and only when askwright made it a draft. `--no-draft` opts out; issues and closed or merged pull requests are untouched, and a refused draft change is reported without failing the post or reply. tests/test_ask.py: the `unittest.main()` guard sat above `GitHubTests`, so running the file never ran them; it is now at the end. scripts/budget.py: the install band's yellow limit goes from 512 KB to 520 KB for the hold (515 KB installed; main had under 1 KB left).
 
 ### C-20261118-2 · 2026-11-18 · Paint toolbar uses icons with tooltips
 - because: user request (word buttons crowded the editor)
